@@ -1,0 +1,56 @@
+[job]
+dump_folder = "./outputs"
+description = "Qwen3 0.6B with spectral control"
+
+[model]
+name = "spectral_control"
+flavor = "0.6B"
+hf_assets_path = "./assets/hf/Qwen3-0.6B"
+
+[optimizer]
+name = "AdamW"
+lr = 3e-4
+eps = 1e-8
+
+[lr_scheduler]
+warmup_steps = 2
+
+[training]
+local_batch_size = 4
+seq_len = 4096
+max_norm = 1.0
+steps = 10
+dataset = "c4"
+
+[parallelism]
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = -1
+fsdp_reshard_after_forward = "default"
+tensor_parallel_degree = 1
+context_parallel_degree = 1
+
+[checkpoint]
+enable = false
+
+[activation_checkpoint]
+mode = "selective"
+selective_ac_option = "op"
+
+[compile]
+enable = false
+
+[experimental]
+custom_args_module = "torchtitan.experiments.spectral_control.custom_args"
+
+[spectral]
+enable = true
+method = "soft_cap"        # options: soft_cap, hard_cap, normalize, hammer, weight_decay, svd_cap
+w_max = 1.0
+spectral_wd = 0.0
+alpha = 0.5                 # if use_coupling=false, else computed via coupling
+use_coupling = true
+max_update_norm = 0.0003    # usually set ~ lr when using coupling
+sensitive_to_wmax = true
+include_fqns = []
+exclude_fqns = ["tok_embeddings", "output"]
+
