@@ -3,7 +3,6 @@
 dump_folder = "./outputs"
 description = "debug training"
 print_args = false
-use_for_integration_test = true
 [profiling]
 enable_profiling = false
 save_traces_folder = "profile_trace"
@@ -64,8 +63,10 @@ local_batch_size = 8
 seq_len = 2048
 max_norm = 1.0  # grad norm clipping
 steps = 10
-compile = false
 dataset = "c4_test"  # supported datasets: c4_test (2K), c4 (177M)
+
+[compile]
+enable = false
 
 [parallelism]
 data_parallel_replicate_degree = 1
@@ -78,7 +79,7 @@ pipeline_parallel_degree = 1
 pipeline_parallel_schedule = "1F1B"
 
 [checkpoint]
-enable_checkpoint = false
+enable = false
 folder = "checkpoint"
 interval = 10
 last_save_model_only = false
@@ -93,4 +94,3 @@ selective_ac_option = '2'  # 'int' = ac every positive int layer or 'op', ac bas
 enable_fsdp_float8_all_gather = false
 precompute_float8_dynamic_scale_for_fsdp = false
 filter_fqns = ["output", "router.gate"]
-moe_fqns = ["experts"]
