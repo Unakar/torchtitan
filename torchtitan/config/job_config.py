@@ -135,6 +135,63 @@ class Optimizer:
     register_post_accumulate_grad_hook after the optimizer is built.
     """
 
+    head_lr_scaling: bool = True
+    """Whether to apply 1/sqrt(dim) learning rate scaling for head layers."""
+
+    # Learning rate scaling factors for different parameter types
+    scalar_lr_factor: float = 1.0
+    """Learning rate scaling factor for scalar parameters."""
+
+    embedding_lr_factor: float = 1.0
+    """Learning rate scaling factor for embedding parameters."""
+
+    head_lr_factor: float = 1.0
+    """Learning rate scaling factor for head parameters (applied after head_lr_scaling if enabled)."""
+
+    routing_lr_factor: float = 1.0
+    """Learning rate scaling factor for routing parameters (used by Muon)."""
+
+    expert_lr_factor: float = 1.0
+    """Learning rate scaling factor for expert parameters (used by Muon)."""
+
+    # Muon-specific parameters
+    mu: float = 0.95
+    """Momentum factor for Muon optimizer updates."""
+
+    nesterov: bool = False
+    """Whether to use Nesterov momentum in Muon optimizer."""
+
+    adjust_lr: str | None = "spectral_norm"
+    """How to adjust the learning rate for Muon updates. Options: 'spectral_norm', 'rms_norm', or None."""
+
+    flatten: bool = False
+    """Whether to flatten 3D+ tensors to 2D for Muon updates."""
+
+    use_triton: bool = False
+    """Whether to use Triton kernel for Newton-Schulz in Muon optimizer."""
+
+    algorithm: str | None = None
+    """Default algorithm for matrix parameters when using Muon (e.g. 'muon', 'adamw')."""
+
+    scalar_optimizer: str = "adamw"
+    """Optimizer to apply to scalar (1D) parameters when using Muon."""
+
+    embedding_optimizer: str = "adamw"
+    """Optimizer to apply to embedding parameters when using Muon."""
+
+    head_optimizer: str = "adamw"
+    """Optimizer to apply to model head parameters when using Muon."""
+
+    routing_optimizer: str = "adamw"
+    """Optimizer to apply to routing parameters (MoE) when using Muon."""
+
+    expert_optimizer: str | None = None
+    """Optional optimizer override for expert parameters (MoE) when using Muon."""
+
+    replicate_mesh_grad_sync: bool = True
+    """Whether to sync gradients across replicate mesh for Muon parameter groups."""
+
+
 
 @dataclass
 class LRScheduler:

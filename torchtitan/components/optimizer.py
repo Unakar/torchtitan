@@ -265,6 +265,11 @@ def build_optimizers(
         optimizer_config (OptimizerConfig): Optimizer config containing the optimizer name and parameters.
         parallel_dims (ParallelDims): Parallel dimensions for the model.
     """
+    if optimizer_config.name.lower() == "muon":
+        from torchtitan.experiments.muon.titon_muon import build_muon_optimizers
+
+        return build_muon_optimizers(model_parts, optimizer_config, parallel_dims)
+
     optim_in_bwd = optimizer_config.early_step_in_backward
     if optim_in_bwd:
         if parallel_dims.ep_enabled:
