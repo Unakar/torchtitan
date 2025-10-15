@@ -9,6 +9,7 @@ from torchtitan.config.job_config import JobConfig as BaseJobConfig
 @dataclass
 class Spectral:
     enable: bool = True
+    enable_use_time_norm: bool = True
     method: Literal["soft_cap", "hard_cap", "normalize", "hammer", "weight_decay", "svd_cap", "none"] = "soft_cap"
     w_max: float = 1.0
     spectral_wd: float = 0.0
@@ -23,4 +24,3 @@ class Spectral:
 @dataclass
 class JobConfig(BaseJobConfig):
     spectral: Spectral = field(default_factory=Spectral)
-

@@ -44,6 +44,7 @@ custom_args_module = "torchtitan.experiments.spectral_control.custom_args"
 
 [spectral]
 enable = true
+enable_use_time_norm = true       # use-time RMS normalization for Linear weights
 method = "soft_cap"        # options: soft_cap, hard_cap, normalize, hammer, weight_decay, svd_cap
 w_max = 1.0
 spectral_wd = 0.0
@@ -53,4 +54,3 @@ max_update_norm = 0.0003    # usually set ~ lr when using coupling
 sensitive_to_wmax = true
 include_fqns = []
 exclude_fqns = ["tok_embeddings", "output"]
-

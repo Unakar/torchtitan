@@ -6,7 +6,7 @@ from typing import Callable, Iterable, Literal
 import torch
 from torch import nn, Tensor
 
-from torchtitan.experiments.spectral_control.spectral_utils import (
+from torchtitan.spectral_utils import (
     hard_cap,
     orthogonalize,
     pure_svd,
@@ -16,6 +16,7 @@ from torchtitan.experiments.spectral_control.spectral_utils import (
     spectral_normalize,
     spectral_weight_decay,
 )
+from torchtitan.experiments.double_norm.use_time_norm import attach_use_time_norm
 
 
 Method = Literal["soft_cap", "hard_cap", "normalize", "hammer", "weight_decay", "svd_cap", "none"]
@@ -24,6 +25,7 @@ Method = Literal["soft_cap", "hard_cap", "normalize", "hammer", "weight_decay", 
 @dataclass
 class SpectralConfig:
     enable: bool = False
+    enable_use_time_norm: bool = True
     method: Method = "soft_cap"
     w_max: float = 1.0
     spectral_wd: float = 0.0
@@ -104,6 +106,7 @@ def _get_spectral_cfg_from_job(job_config) -> SpectralConfig:
         return SpectralConfig(enable=True)
     return SpectralConfig(
         enable=getattr(spectral, "enable", False),
+        enable_use_time_norm=bool(getattr(spectral, "enable_use_time_norm", True)),
         method=getattr(spectral, "method", "soft_cap"),
         w_max=float(getattr(spectral, "w_max", 1.0)),
         spectral_wd=float(getattr(spectral, "spectral_wd", 0.0)),
@@ -172,7 +175,20 @@ def attach_spectral_projection(optimizers: torch.optim.Optimizer) -> None:
     except Exception:
         spectral_cfg = SpectralConfig(enable=True)
 
-    if not spectral_cfg.enable or model_parts is None:
+    if model_parts is None:
+        return
+
+    # Attach use-time RMS normalization (pre-norm) once, before training starts
+    if spectral_cfg.enable_use_time_norm:
+        attach_use_time_norm(
+            model_parts,
+            include_fqns=spectral_cfg.include_fqns,
+            exclude_fqns=spectral_cfg.exclude_fqns,
+            eps=1e-8,
+            target_rms=1.0,
+        )
+
+    if not spectral_cfg.enable:
         return
 
     @torch.no_grad()
