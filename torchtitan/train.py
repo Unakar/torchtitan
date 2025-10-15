@@ -24,7 +24,6 @@ from torchtitan.components.metrics import (
 )
 from torchtitan.config import ConfigManager, JobConfig, TORCH_DTYPE_MAP
 from torchtitan.distributed import ParallelDims, utils as dist_utils
-from torchtitan.models.attention import init_attention_mask
 from torchtitan.protocols.model_converter import build_model_converters
 from torchtitan.tools import utils
 from torchtitan.tools.logging import init_logger, logger
@@ -79,7 +78,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         if job_config.experimental.custom_import:
             importlib.import_module(job_config.experimental.custom_import)
 
-        if job_config.job.print_args:
+        if job_config.job.print_config:
             logger.info(f"Running with args: {job_config.to_dict()}")
 
         device_module, device_type = utils.device_module, utils.device_type
@@ -95,15 +94,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         )
         world_size = int(os.environ["WORLD_SIZE"])
         parallelism_config = job_config.parallelism
-        self.parallel_dims = parallel_dims = ParallelDims(
-            dp_shard=parallelism_config.data_parallel_shard_degree,
-            dp_replicate=parallelism_config.data_parallel_replicate_degree,
-            cp=parallelism_config.context_parallel_degree,
-            tp=parallelism_config.tensor_parallel_degree,
-            pp=parallelism_config.pipeline_parallel_degree,
-            ep=parallelism_config.expert_parallel_degree,
-            etp=parallelism_config.expert_tensor_parallel_degree,
-            world_size=world_size,
+        self.parallel_dims = parallel_dims = self._create_parallel_dims(
+            parallelism_config, world_size
         )
 
         world_mesh = parallel_dims.world_mesh
@@ -152,7 +144,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         self.model_args = model_args
 
         logger.info(
-            f"Building {self.train_spec.name} {job_config.model.flavor} with {model_args}"
+            f"Building {job_config.model.name} {job_config.model.flavor} with {model_args}"
         )
         with (
             torch.device("meta"),
@@ -182,7 +174,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         ) = model_args.get_nparams_and_flops(model, job_config.training.seq_len)
 
         logger.info(
-            f"{color.blue}Model {self.train_spec.name} {job_config.model.flavor} "
+            f"{color.blue}Model {job_config.model.name} {job_config.model.flavor} "
             f"{color.red}size: {model_param_count:,} total parameters{color.reset}"
         )
 
@@ -197,7 +189,9 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             init_device = device_type
             buffer_device = None
 
-        self.loss_fn = self.train_spec.build_loss_fn(job_config)
+        self.loss_fn = self.train_spec.build_loss_fn(
+            job_config, parallel_dims=parallel_dims, ft_manager=self.ft_manager
+        )
 
         # verify batch sizes
         global_batch_size = job_config.training.global_batch_size
@@ -227,7 +221,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         if parallel_dims.pp_enabled:
             if not self.train_spec.pipelining_fn:
                 raise RuntimeError(
-                    f"Pipeline Parallel is enabled but {self.train_spec.name} "
+                    f"Pipeline Parallel is enabled but {job_config.model.name} "
                     f"does not support pipelining"
                 )
 
@@ -375,6 +369,18 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             f"(warmup {job_config.lr_scheduler.warmup_steps})"
         )
 
+    def _create_parallel_dims(self, parallelism_config, world_size) -> ParallelDims:
+        return ParallelDims(
+            dp_shard=parallelism_config.data_parallel_shard_degree,
+            dp_replicate=parallelism_config.data_parallel_replicate_degree,
+            cp=parallelism_config.context_parallel_degree,
+            tp=parallelism_config.tensor_parallel_degree,
+            pp=parallelism_config.pipeline_parallel_degree,
+            ep=parallelism_config.expert_parallel_degree,
+            etp=parallelism_config.expert_tensor_parallel_degree,
+            world_size=world_size,
+        )
+
     def batch_generator(
         self, data_iterable: Iterable[tuple[dict[str, torch.Tensor], torch.Tensor]]
     ) -> Iterable[tuple[dict[str, torch.Tensor], torch.Tensor]]:
@@ -414,15 +420,21 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
 
         inputs = input_dict["input"]
         extra_inputs = {k: v for k, v in input_dict.items() if k != "input"}
-        # Create the FlexAttention mask according to the input
+        # For arguments, like attention_masks, we have to put them in a separate
+        # dict as extra_inputs are not forwarded to other stages in PP, but
+        # extra_args are.
+        extra_args = {}
+
         if getattr(self.model_args, "use_flex_attn", False):
-            cp_mesh = (
-                parallel_dims.world_mesh["cp"] if parallel_dims.cp_enabled else None
+            extra_args["attention_masks"] = model_parts[0].get_attention_masks(
+                input_batch=inputs,
+                tokenizer=self.tokenizer,
+                extra_inputs=extra_inputs,
             )
-            init_attention_mask(inputs, self.tokenizer.eos_id, cp_mesh)
 
         # apply context parallelism if cp is enabled
         # ensure CP handles the separate freqs_cis buffer for each pp stage
+        cp_mesh = parallel_dims.world_mesh["cp"] if parallel_dims.cp_enabled else None
         optional_context_parallel_ctx = (
             dist_utils.create_context_parallel_ctx(
                 cp_mesh=parallel_dims.world_mesh["cp"],
@@ -445,13 +457,17 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                     self.pp_schedule.step(
                         inputs,
                         **extra_inputs,
+                        **extra_args,
                         target=targets,
                         losses=losses,
                         input_batch=inputs,
                     )
                 else:
                     self.pp_schedule.step(
-                        target=targets, losses=losses, input_batch=inputs
+                        **extra_args,
+                        target=targets,
+                        losses=losses,
+                        input_batch=inputs,
                     )
 
             # accumulate losses across pipeline microbatches
@@ -469,7 +485,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             with self.train_context(optional_context_parallel_ctx):
                 assert len(model_parts) == 1
                 with self.maybe_enable_amp:
-                    pred = model_parts[0](inputs, **extra_inputs)
+                    pred = model_parts[0](inputs, **extra_inputs, **extra_args)
                     loss = self.loss_fn(pred, labels)
                 # need to free pred before bwd to avoid peaking memory
                 del pred
